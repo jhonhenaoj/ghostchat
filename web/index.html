@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ghost Chat - Mensajería Segura</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0A0E1A; color: white; font-family: 'Segoe UI', sans-serif; }
+    .hero { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 20px; text-align: center; }
+    .logo { width: 120px; height: 120px; background: linear-gradient(135deg, #0066FF, #00D4FF); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 60px; margin-bottom: 30px; box-shadow: 0 0 40px rgba(0,212,255,0.4); }
+    h1 { font-size: 48px; font-weight: 900; letter-spacing: 4px; background: linear-gradient(135deg, #00D4FF, #0066FF); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 10px; }
+    .subtitle { color: rgba(255,255,255,0.4); font-size: 14px; letter-spacing: 3px; margin-bottom: 40px; }
+    .features { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; max-width: 900px; margin-bottom: 60px; }
+    .feature { background: #0D1321; border: 1px solid rgba(0,212,255,0.2); border-radius: 16px; padding: 24px; text-align: left; }
+    .feature-icon { font-size: 32px; margin-bottom: 12px; }
+    .feature h3 { color: #00D4FF; margin-bottom: 8px; }
+    .feature p { color: rgba(255,255,255,0.5); font-size: 14px; line-height: 1.5; }
+    .download-btn { background: linear-gradient(135deg, #0066FF, #00D4FF); color: white; border: none; padding: 18px 48px; border-radius: 50px; font-size: 18px; font-weight: bold; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 12px; box-shadow: 0 0 30px rgba(0,212,255,0.4); transition: transform 0.2s; margin: 10px; }
+    .download-btn:hover { transform: scale(1.05); }
+    .badge { background: rgba(0,212,255,0.1); border: 1px solid rgba(0,212,255,0.3); border-radius: 20px; padding: 6px 16px; font-size: 12px; color: #00D4FF; display: inline-block; margin: 4px; }
+    .stats { display: flex; gap: 40px; margin: 40px 0; flex-wrap: wrap; justify-content: center; }
+    .stat { text-align: center; }
+    .stat-number { font-size: 36px; font-weight: 900; color: #00D4FF; }
+    .stat-label { color: rgba(255,255,255,0.4); font-size: 12px; }
+    footer { background: #0D1321; padding: 40px 20px; text-align: center; color: rgba(255,255,255,0.3); border-top: 1px solid rgba(255,255,255,0.05); }
+    footer a { color: #00D4FF; text-decoration: none; margin: 0 10px; }
+  </style>
+</head>
+<body>
+  <div class="hero">
+    <div class="logo">👻</div>
+    <h1>GHOST CHAT</h1>
+    <p class="subtitle">MENSAJERÍA REIMAGINADA · MÁXIMA SEGURIDAD</p>
+    
+    <div>
+      <span class="badge">🔐 Cifrado E2E</span>
+      <span class="badge">🛡️ Sin metadatos</span>
+      <span class="badge">💀 Mensajes que desaparecen</span>
+      <span class="badge">🔒 Código abierto</span>
+    </div>
+
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-number">256</div>
+        <div class="stat-label">bits de cifrado AES</div>
+      </div>
+      <div class="stat">
+        <div class="stat-number">0</div>
+        <div class="stat-label">datos vendidos</div>
+      </div>
+      <div class="stat">
+        <div class="stat-number">100%</div>
+        <div class="stat-label">privado</div>
+      </div>
+    </div>
+
+    <div class="features">
+      <div class="feature">
+        <div class="feature-icon">🔐</div>
+        <h3>Cifrado End-to-End</h3>
+        <p>Tus mensajes se cifran con AES-256 antes de salir de tu teléfono. Ni nosotros podemos leerlos.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">💀</div>
+        <h3>Mensajes que desaparecen</h3>
+        <p>Configura mensajes que se autodestruyen en 5 segundos, 1 minuto o cuando quieras.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">🛡️</div>
+        <h3>Perfil falso</h3>
+        <p>Si alguien te obliga a abrir la app, muestra un chat vacío con contraseña trampa.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">🔑</div>
+        <h3>Diffie-Hellman 2048</h3>
+        <p>Intercambio de claves militar. Cada conversación tiene su propia clave única.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">📡</div>
+        <h3>Sin número de teléfono</h3>
+        <p>Agrega contactos solo por código QR. Sin números, sin correos, sin rastro.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">🔴</div>
+        <h3>Botón de pánico</h3>
+        <p>Un botón borra todo instantáneamente del dispositivo y del servidor.</p>
+      </div>
+    </div>
+
+    <a href="/GhostChat.apk" class="download-btn" download>
+      📱 Descargar para Android
+    </a>
+    <br>
+    <p style="color: rgba(255,255,255,0.3); margin-top: 16px; font-size: 13px;">Versión 1.0 · Android 8.0+ · Gratis</p>
+  </div>
+
+  <footer>
+    <p>© 2026 Ghost Chat · Todos los derechos reservados</p>
+    <br>
+    <a href="/privacy">Política de Privacidad</a>
+    <a href="/terms">Términos de Uso</a>
+    <a href="/contact">Contacto</a>
+  </footer>
+</body>
+</html>

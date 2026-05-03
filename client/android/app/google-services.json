@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "188563736527",
+    "project_id": "mi-app-segura-54820",
+    "storage_bucket": "mi-app-segura-54820.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:188563736527:android:efb15faa876ea80748f4ba",
+        "android_client_info": {
+          "package_name": "com.secureapp.ghost_client"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBfaFwBxCeOL4VrcWY8tBMbmY-ZPw4wqtk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
