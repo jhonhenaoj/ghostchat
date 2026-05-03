@@ -1,0 +1,20 @@
+# Archivos grandes
+*.zip
+*.apk
+server/main
+server/uploads/
+ghost_chat_*.zip
+commandlinetools-*.zip
+
+# Flutter
+client/build/
+client/.dart_tool/
+client/.flutter-plugins
+client/.flutter-plugins-dependencies
+
+# Go
+server/ghost.db
+server/firebase-key.json
+
+# Android SDK
+android-sdk/
