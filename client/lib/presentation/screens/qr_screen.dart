@@ -20,7 +20,7 @@ class QrScreen extends StatefulWidget {
 class _QrScreenState extends State<QrScreen> with SingleTickerProviderStateMixin {
   late TabController _tabController;
   bool _scanned = false;
-  static const String _serverUrl = 'https://api.soluciones-publicitarias-latam.com';
+  static const String _serverUrl = 'http://162.243.174.252:9090';
 
   static const Color _bg = Color(0xFF0A0E1A);
   static const Color _surface = Color(0xFF0D1321);

@@ -76,7 +76,7 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
     setState(() { _loading = true; _error = null; });
     try {
       final response = await http.post(
-        Uri.parse("https://api.soluciones-publicitarias-latam.com/login"),
+        Uri.parse("http://162.243.174.252:9090/login"),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({"username": _userController.text.trim(), "password": _passController.text.trim()}),
       );

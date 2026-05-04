@@ -74,7 +74,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (file == null) return;
     setState(() => _loading = true);
     try {
-      final request = http.MultipartRequest('POST', Uri.parse('https://api.soluciones-publicitarias-latam.com/upload-avatar'));
+      final request = http.MultipartRequest('POST', Uri.parse('http://162.243.174.252:9090/upload-avatar'));
       request.fields['user_id'] = widget.myUserId;
       request.files.add(await http.MultipartFile.fromPath('avatar', file.path));
       final response = await request.send();
@@ -207,7 +207,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       // 1. Obtener historial del servidor
       final prefs = await SharedPreferences.getInstance();
-      final serverUrl = 'https://api.soluciones-publicitarias-latam.com';
+      final serverUrl = 'http://162.243.174.252:9090';
       final remoteUserId = widget.myUserId == '1' ? '2' : '1';
 
       setState(() => _status = '📦 Descargando historial...');

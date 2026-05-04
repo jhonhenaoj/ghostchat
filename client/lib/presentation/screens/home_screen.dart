@@ -36,7 +36,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   static const Color _surface = Color(0xFF0D1321);
   static const Color _cyan = Color(0xFF00D4FF);
   static const Color _blue = Color(0xFF0066FF);
-  static const String _serverUrl = 'https://api.soluciones-publicitarias-latam.com';
+  static const String _serverUrl = 'http://162.243.174.252:9090';
 
   IOWebSocketChannel? _channel;
   List<Map<String, dynamic>> _contacts = [];

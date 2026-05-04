@@ -45,7 +45,7 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _controller = TextEditingController();
   final ScrollController _scrollController = ScrollController();
-  final String serverUrl = "https://api.soluciones-publicitarias-latam.com";
+  final String serverUrl = "http://162.243.174.252:9090";
   final _httpClient = http.Client();
 
   String get remoteUserId => widget.remoteUserId ?? (widget.myUserId == "1" ? "2" : "1");

@@ -32,7 +32,7 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
 
   Future<void> _loadUsers() async {
     try {
-      final resp = await http.get(Uri.parse('https://api.soluciones-publicitarias-latam.com/users?my_id=${widget.myUserId}'));
+      final resp = await http.get(Uri.parse('http://162.243.174.252:9090/users?my_id=${widget.myUserId}'));
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body);
         setState(() => _users = List<Map<String, dynamic>>.from(data['users']));
@@ -52,7 +52,7 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
     setState(() => _loading = true);
     try {
       final resp = await http.post(
-        Uri.parse('https://api.soluciones-publicitarias-latam.com/group/create'),
+        Uri.parse('http://162.243.174.252:9090/group/create'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'name': _nameCtrl.text.trim(),

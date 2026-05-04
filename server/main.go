@@ -326,7 +326,7 @@ func handleUpload(c *gin.Context) {
 		c.JSON(500, gin.H{"error": "Error guardando"})
 		return
 	}
-	url := "http://192.168.100.21:9090/uploads/" + filename
+	url := "/uploads/" + filename
 	c.JSON(200, gin.H{"url": url, "filename": file.Filename, "size": file.Size})
 }
 
@@ -343,7 +343,7 @@ func handleUploadAvatar(c *gin.Context) {
 		c.JSON(500, gin.H{"error": "Error guardando"})
 		return
 	}
-	url := "http://192.168.100.21:9090/avatars/" + userID + ".jpg"
+	url := "/avatars/" + userID + ".jpg"
 	c.JSON(200, gin.H{"url": url})
 }
 
@@ -597,7 +597,7 @@ func main() {
 	r.StaticFile("/", "../web/index.html")
 	r.StaticFile("/terms", "../web/terms.html")
 	r.StaticFile("/privacy", "../web/privacy.html")
-	r.StaticFile("/GhostChat.apk", "/home/william-kalinux/Escritorio/GhostChat.apk")
+	r.StaticFile("/GhostChat.apk", "/root/ghostchat/server/GhostChat.apk")
 	r.Static("/avatars", "./avatars")
 	r.POST("/login", handleLogin)
 	r.POST("/register", handleRegister)

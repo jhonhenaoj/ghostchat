@@ -45,7 +45,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     setState(() { _loading = true; _error = null; });
     try {
       final resp = await http.post(
-        Uri.parse('https://api.soluciones-publicitarias-latam.com/register'),
+        Uri.parse('http://162.243.174.252:9090/register'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'username': user, 'password': pass, 'display_name': name.isEmpty ? user : name}),
       );

@@ -3,7 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 
 class DecoyProfile {
-  static const String _serverUrl = 'https://api.soluciones-publicitarias-latam.com';
+  static const String _serverUrl = 'http://162.243.174.252:9090';
 
   // Guardar contraseña trampa y contraseña de emergencia
   static Future<void> setup({
