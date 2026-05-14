@@ -13,7 +13,7 @@ class WebSocketService {
   // Conectar al servidor WebSocket
   void connect(String userId, String accessToken) {
     // La URL de conexión incluye el user_id y el token como query params
-    final Uri wsUrl = Uri.parse('wss://api.soluciones-publicitarias-latam.com/ws?user_id=$userId&token=$accessToken');
+    final Uri wsUrl = Uri.parse('ws://162.243.174.252:9090/ws?user_id=$userId&token=$accessToken');
     
     print("WebSocketService: Intentando conectar a $wsUrl");
 

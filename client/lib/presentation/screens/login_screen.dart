@@ -3,11 +3,15 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:onesignal_flutter/onesignal_flutter.dart';
 
 import 'profile_setup_screen.dart';
 import 'home_screen.dart';
 import 'pin_screen.dart';
 import 'register_screen.dart';
+import 'reset_password_screen.dart';
+import 'reset_password_screen.dart';
 import '../../../utils/decoy_profile.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -53,30 +57,22 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
 
   Future<void> _checkSession() async {
     final prefs = await SharedPreferences.getInstance();
-    final userId = prefs.getString('user_id');
-    final username = prefs.getString('username');
+    final userId = prefs.getString("user_id");
+    final username = prefs.getString("username");
+    // Si ya hay sesion, ir directo al PIN
     if (userId != null && username != null) {
       if (!mounted) return;
-      final pinEnabled = prefs.getBool('pin_enabled') ?? false;
-      if (pinEnabled) {
-        Navigator.pushReplacement(context, MaterialPageRoute(
-          builder: (_) => PinScreen(mode: 'verify', myUserId: userId, username: username),
-        ));
-      } else {
-        Navigator.pushReplacement(context, MaterialPageRoute(
-          builder: (_) => HomeScreen(myUserId: userId, username: username),
-        ));
-      }
-    } else {
-      setState(() => _loading = false);
+      Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const PinScreen()));
+      return;
     }
+    setState(() => _loading = false);
   }
 
   Future<void> _login() async {
     setState(() { _loading = true; _error = null; });
     try {
       final response = await http.post(
-        Uri.parse("http://162.243.174.252:9090/login"),
+        Uri.parse("https://api.soluciones-publicitarias-latam.com/login"),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({"username": _userController.text.trim(), "password": _passController.text.trim()}),
       );
@@ -107,14 +103,17 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('user_id', data["user_id"]);
         await prefs.setString('username', data["username"]);
+        if (data['session_token'] != null) { await prefs.setString('session_token', data['session_token'].toString()); }
+        await prefs.setInt('login_timestamp', DateTime.now().millisecondsSinceEpoch);
+        OneSignal.login(data['user_id']?.toString() ?? '');
+        OneSignal.User.addTagWithKey('user_id', data['user_id']?.toString() ?? '');
         if (!mounted) return;
         final prefs2 = await SharedPreferences.getInstance();
         await prefs2.setString('user_id', data["user_id"]);
         await prefs2.setString('username', data["username"]);
         if (!mounted) return;
-        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => HomeScreen(myUserId: data["user_id"], username: data["username"])));
-      } else {
-        setState(() => _error = data["error"] ?? "Error desconocido");
+        // Siempre ir al PIN después del login
+        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const PinScreen()));
       }
     } catch (e) {
       setState(() => _error = "No se pudo conectar al servidor");
@@ -273,6 +272,15 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
                     ),
                   ),
 
+                  const SizedBox(height: 12),
+                  // Olvidé contraseña
+                  GestureDetector(
+                    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ResetPasswordScreen())),
+                    child: const Text(
+                      '¿Olvidaste tu contraseña?',
+                      style: TextStyle(color: Color(0xFF00D4FF), fontSize: 13),
+                    ),
+                  ),
                   const SizedBox(height: 16),
                   // Boton registro
                   GestureDetector(

@@ -5,19 +5,23 @@ import 'package:flutter_background_service_android/flutter_background_service_an
 import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
 import 'package:flutter_callkit_incoming/entities/entities.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 Future<void> initBackgroundService() async {
-  // Crear canal de notificación primero
+  print('🚀 Iniciando servicio en segundo plano...');
   final plugin = FlutterLocalNotificationsPlugin();
   final androidPlugin = plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+  
+  // Canal de background con importancia alta
   await androidPlugin?.createNotificationChannel(const AndroidNotificationChannel(
     'ghost_chat_bg',
-    'Ghost Chat Background',
-    description: 'Servicio en segundo plano',
+    'Ghost Chat',
+    description: 'Mantiene conexión activa',
     importance: Importance.low,
+    playSound: false,
   ));
 
   final service = FlutterBackgroundService();
@@ -28,8 +32,9 @@ Future<void> initBackgroundService() async {
       isForegroundMode: true,
       notificationChannelId: 'ghost_chat_bg',
       initialNotificationTitle: 'Ghost Chat',
-      initialNotificationContent: 'Activo',
+      initialNotificationContent: 'Conectado',
       foregroundServiceNotificationId: 888,
+      autoStartOnBoot: true,
     ),
     iosConfiguration: IosConfiguration(autoStart: false, onForeground: onStart),
   );
@@ -38,6 +43,8 @@ Future<void> initBackgroundService() async {
 
 @pragma('vm:entry-point')
 void onStart(ServiceInstance service) async {
+  print('🔧 Servicio en segundo plano INICIADO');
+  print('🔧 Servicio en segundo plano iniciado');
   if (service is AndroidServiceInstance) {
     service.setAsForegroundService();
   }
@@ -46,6 +53,7 @@ void onStart(ServiceInstance service) async {
   Timer? heartbeat;
   Timer? reconnectTimer;
   bool running = true;
+  bool isConnected = false;
 
   service.on('stopService').listen((_) {
     running = false;
@@ -55,33 +63,67 @@ void onStart(ServiceInstance service) async {
     service.stopSelf();
   });
 
+  Future<String> getCallerName(String userId) async {
+    try {
+      final resp = await http.get(
+        Uri.parse('http://162.243.174.252:9090/profile?user_id=$userId'),
+      ).timeout(const Duration(seconds: 3));
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        final name = data['display_name']?.toString() ?? '';
+        if (name.isNotEmpty) return name;
+      }
+    } catch (_) {}
+    return 'Usuario $userId';
+  }
+
   Future<void> connect() async {
+    return; // Usar solo SocketManager
     if (!running) return;
+    isConnected = false;
+    
     try {
       final prefs = await SharedPreferences.getInstance();
       final userId = prefs.getString('user_id');
-      if (userId == null) {
+      if (userId == null || userId.isEmpty) {
         reconnectTimer = Timer(const Duration(seconds: 10), connect);
         return;
       }
 
       channel?.sink.close();
       channel = IOWebSocketChannel.connect(
-        'wss://api.soluciones-publicitarias-latam.com/ws?user_id=\$userId',
+        'ws://162.243.174.252:9090/ws?user_id=$userId',
         pingInterval: const Duration(seconds: 20),
       );
+
+      isConnected = true;
+      print('🔌 Conectado al WebSocket');
 
       channel!.stream.listen(
         (data) async {
           if (!running) return;
           try {
             final msg = jsonDecode(data as String) as Map<String, dynamic>;
-            if (msg['type'] == 'call') {
+            final type = msg['type']?.toString() ?? '';
+            print('📩 MENSAJE RECIBIDO: $type');
+            if (type == 'call') print('📞 ¡LLAMADA DETECTADA! Datos: $msg');
+            
+            if (type == 'call') {
               final fromUser = msg['from']?.toString() ?? '';
               final isVideo = msg['isVideo'] == true;
+              // Guardar datos de llamada para acceso rápido
+              final prefs2 = await SharedPreferences.getInstance();
+              await prefs2.setString('bg_call_from', fromUser);
+              await prefs2.setBool('bg_call_video', isVideo);
+              await prefs2.setString('flutter.pending_call_from', fromUser);
+              await prefs2.setBool('flutter.pending_call_video', isVideo);
+              await prefs2.setInt('bg_call_time', DateTime.now().millisecondsSinceEpoch);
+              // Obtener nombre real del servidor
+              final callerName = await getCallerName(fromUser);
+              
               await FlutterCallkitIncoming.showCallkitIncoming(CallKitParams(
                 id: const Uuid().v4(),
-                nameCaller: 'Usuario \$fromUser',
+                nameCaller: callerName,
                 appName: 'Ghost Chat',
                 type: isVideo ? 1 : 0,
                 duration: 30000,
@@ -104,25 +146,37 @@ void onStart(ServiceInstance service) async {
                 ),
               ));
             }
-          } catch (_) {}
+          } catch (e) {
+            print('❌ ERROR procesando llamada: $e');
+          }
         },
         onDone: () {
+          isConnected = false;
           heartbeat?.cancel();
-          if (running) reconnectTimer = Timer(const Duration(seconds: 5), connect);
+          if (running) reconnectTimer = Timer(const Duration(seconds: 30), connect);
         },
         onError: (_) {
+          isConnected = false;
           heartbeat?.cancel();
-          if (running) reconnectTimer = Timer(const Duration(seconds: 5), connect);
+          if (running) reconnectTimer = Timer(const Duration(seconds: 30), connect);
         },
       );
 
       heartbeat?.cancel();
-      heartbeat = Timer.periodic(const Duration(seconds: 25), (_) {
-        try { channel?.sink.add(jsonEncode({'type': 'ping', 'to': 'server'})); } catch (_) {}
+      heartbeat = Timer.periodic(const Duration(seconds: 20), (_) {
+        try {
+          channel?.sink.add(jsonEncode({'type': 'ping', 'to': 'server'}));
+        } catch (_) {
+          if (running) {
+            reconnectTimer?.cancel();
+            reconnectTimer = Timer(const Duration(seconds: 3), connect);
+          }
+        }
       });
 
     } catch (_) {
-      if (running) reconnectTimer = Timer(const Duration(seconds: 5), connect);
+      isConnected = false;
+      if (running) reconnectTimer = Timer(const Duration(seconds: 30), connect);
     }
   }
 

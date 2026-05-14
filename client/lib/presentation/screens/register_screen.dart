@@ -1,7 +1,12 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'home_screen.dart';
+import 'pin_screen.dart';
+import 'package:onesignal_flutter/onesignal_flutter.dart';
+import 'pin_screen.dart';
+import 'package:onesignal_flutter/onesignal_flutter.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -51,9 +56,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
       );
       final data = jsonDecode(resp.body);
       if (resp.statusCode == 200) {
+        // Guardar sesion localmente
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('user_id', data['user_id']);
+        await prefs.setString('username', data['username']);
+        if (data['session_token'] != null) {
+          await prefs.setString('session_token', data['session_token'].toString());
+        }
+        OneSignal.login("ghostchat_user_${data['user_id']}"); 
+        OneSignal.User.addTagWithKey('user_id', data['user_id'].toString());
         if (!mounted) return;
         Navigator.pushReplacement(context, MaterialPageRoute(
-          builder: (_) => HomeScreen(myUserId: data['user_id'], username: data['username']),
+          builder: (_) => const PinScreen(),
         ));
       } else {
         setState(() => _error = data['error'] ?? 'Error al registrar');

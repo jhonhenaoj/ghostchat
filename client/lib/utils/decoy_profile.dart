@@ -24,7 +24,9 @@ class DecoyProfile {
   static Future<bool> isDecoyPassword(String username, String password) async {
     final prefs = await SharedPreferences.getInstance();
     final decoyPass = prefs.getString('decoy_password');
-    return decoyPass != null && password == decoyPass;
+    final realUser = prefs.getString('username') ?? '';
+    // Solo activar si el username es el real y la contraseña es la trampa
+    return decoyPass != null && password == decoyPass && username == realUser;
   }
 
   // Verificar si es contraseña de emergencia
@@ -37,13 +39,20 @@ class DecoyProfile {
   // Ejecutar borrado de emergencia
   static Future<void> executeEmergency(String userId) async {
     try {
-      // Borrar del servidor
       await http.delete(Uri.parse('$_serverUrl/delete-all?user_id=$userId'));
     } catch (_) {}
-
-    // Borrar todo local
     final prefs = await SharedPreferences.getInstance();
+    // Guardar contrasenas de seguridad antes de borrar
+    final decoyPass = prefs.getString('decoy_password');
+    final emergencyPass = prefs.getString('emergency_password');
+    final decoyUserId = prefs.getString('decoy_user_id');
+    final decoyUsername = prefs.getString('decoy_username');
     await prefs.clear();
+    // Restaurar contrasenas de seguridad
+    if (decoyPass != null) await prefs.setString('decoy_password', decoyPass);
+    if (emergencyPass != null) await prefs.setString('emergency_password', emergencyPass);
+    if (decoyUserId != null) await prefs.setString('decoy_user_id', decoyUserId);
+    if (decoyUsername != null) await prefs.setString('decoy_username', decoyUsername);
   }
 
   // Obtener datos del perfil falso

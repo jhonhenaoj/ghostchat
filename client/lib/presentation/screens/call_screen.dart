@@ -1,6 +1,11 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'call_history_screen.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'dart:convert';
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../../utils/socket_manager.dart';
 
 class CallScreen extends StatefulWidget {
@@ -37,14 +42,25 @@ class CallScreenState extends State<CallScreen> {
   bool _isConnected = false;
   bool _isFrontCamera = true;
   bool _disposed = false;
+  bool _closingCall = false;
+  bool _renderersInitialized = false;
+  Timer? _offerRetryTimer;
+  String? _remoteAvatarUrl;
+  String _remoteName = '';
   List<RTCIceCandidate> _pendingCandidates = [];
   String _status = "Conectando...";
 
   final Map<String, dynamic> _iceServers = {
     'iceServers': [
+      // STUN servers
       {'urls': 'stun:stun.l.google.com:19302'},
       {'urls': 'stun:stun1.l.google.com:19302'},
+      {'urls': 'stun:stun2.l.google.com:19302'},
+      {'urls': 'stun:stun3.l.google.com:19302'},
+      {'urls': 'stun:stun4.l.google.com:19302'},
       {'urls': 'stun:global.stun.twilio.com:3478'},
+      {'urls': 'stun:stun.cloudflare.com:3478'},
+      // TURN servers gratuitos
       {
         'urls': 'turn:freestun.net:3478',
         'username': 'free',
@@ -54,6 +70,21 @@ class CallScreenState extends State<CallScreen> {
         'urls': 'turns:freestun.net:5349',
         'username': 'free',
         'credential': 'free',
+      },
+      {
+        'urls': 'turn:openrelay.metered.ca:80',
+        'username': 'openrelayproject',
+        'credential': 'openrelayproject',
+      },
+      {
+        'urls': 'turn:openrelay.metered.ca:443',
+        'username': 'openrelayproject',
+        'credential': 'openrelayproject',
+      },
+      {
+        'urls': 'turns:openrelay.metered.ca:443',
+        'username': 'openrelayproject',
+        'credential': 'openrelayproject',
       },
     ]
   };
@@ -67,7 +98,29 @@ class CallScreenState extends State<CallScreen> {
   Future<void> _initRenderers() async {
     await _localRenderer.initialize();
     await _remoteRenderer.initialize();
+    _renderersInitialized = true;
     SocketManager().addListener(_onSocketMessage);
+    // Cargar avatar y nombre del contacto desde local primero
+    final prefs = await SharedPreferences.getInstance();
+    final avatarUrl = prefs.getString('avatar_url_${widget.remoteUserId}');
+    final name = prefs.getString('display_name_${widget.remoteUserId}') ?? '';
+    if (mounted) setState(() {
+      _remoteAvatarUrl = avatarUrl;
+      _remoteName = name;
+    });
+    // Luego cargar desde servidor para tener datos actualizados
+    try {
+      final resp = await http.get(Uri.parse('http://162.243.174.252:9090/profile?user_id=${widget.remoteUserId}'));
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        final serverAvatar = data['avatar_url']?.toString() ?? '';
+        final serverName = data['display_name']?.toString() ?? '';
+        if (mounted) setState(() {
+          if (serverAvatar.isNotEmpty) _remoteAvatarUrl = serverAvatar;
+          if (serverName.isNotEmpty && _remoteName.isEmpty) _remoteName = serverName;
+        });
+      }
+    } catch (_) {}
     await Future.delayed(const Duration(milliseconds: 300));
     await _startCall();
   }
@@ -84,7 +137,7 @@ class CallScreenState extends State<CallScreen> {
       final sdp = msg["sdp"]?.toString();
       if (sdp != null) handleOffer(sdp);
     } else if (type == "hangup") {
-      _saveCallHistory(answered: _isConnected);
+      _saveCallHistory(answered: _isConnected, status: _isConnected ? 'answered' : (widget.callType == 'caller' ? 'missed' : 'rejected'));
       if (mounted) Navigator.of(context, rootNavigator: true).pop();
     } else if (type == "receiver_reconnected") {
       if (widget.callType == 'caller' && _peerConnection != null) {
@@ -146,6 +199,7 @@ class CallScreenState extends State<CallScreen> {
           if (state == RTCIceConnectionState.RTCIceConnectionStateConnected ||
               state == RTCIceConnectionState.RTCIceConnectionStateCompleted) {
             _isConnected = true;
+            _callStart ??= DateTime.now();
             _status = "En llamada ✅";
           } else if (state == RTCIceConnectionState.RTCIceConnectionStateDisconnected) {
             _status = "Desconectado";
@@ -160,6 +214,7 @@ class CallScreenState extends State<CallScreen> {
         setState(() {
           if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
             _isConnected = true;
+            _callStart ??= DateTime.now();
             _status = "En llamada ✅";
           } else if (state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected) {
             _status = "Desconectado";
@@ -213,7 +268,10 @@ class CallScreenState extends State<CallScreen> {
         await _peerConnection!.addCandidate(c);
       }
       _pendingCandidates.clear();
-      final answer = await _peerConnection!.createAnswer();
+      final answer = await _peerConnection!.createAnswer({
+        'offerToReceiveAudio': true,
+        'offerToReceiveVideo': widget.isVideo,
+      });
       await _peerConnection!.setLocalDescription(answer);
       widget.sendSignal({
         'type': 'answer',
@@ -298,6 +356,20 @@ class CallScreenState extends State<CallScreen> {
         'sdp': offer.sdp,
         'isVideo': widget.isVideo,
       });
+      // Reenviar automáticamente cada 2s hasta conectar
+      _offerRetryTimer?.cancel();
+      _offerRetryTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+        if (_isConnected || _disposed) {
+          _offerRetryTimer?.cancel();
+          return;
+        }
+        widget.sendSignal({
+          'type': 'offer',
+          'to': widget.remoteUserId,
+          'sdp': offer.sdp,
+          'isVideo': widget.isVideo,
+        });
+      });
     } catch (e) {
       debugPrint("❌ Error reenviando offer: $e");
     }
@@ -308,23 +380,34 @@ class CallScreenState extends State<CallScreen> {
       'type': 'hangup',
       'to': widget.remoteUserId,
     });
-    _saveCallHistory(answered: true);
+      _saveCallHistory(answered: _isConnected, status: _isConnected ? 'answered' : (widget.callType == 'receiver' ? 'rejected' : 'missed'));
     if (mounted) Navigator.of(context, rootNavigator: true).pop();
   }
 
-  void _saveCallHistory({required bool answered}) {
+  void _saveCallHistory({required bool answered, String status = 'missed'}) {
     final duration = _callStart != null ? DateTime.now().difference(_callStart!) : Duration.zero;
-    // Obtener myUserId del socket
-    final myUserId = widget.callType == 'caller' ? '' : '';
     CallHistoryScreen.saveCall(
       myUserId: SocketManager().currentUserId ?? '',
       remoteUserId: widget.remoteUserId,
-      remoteName: 'Usuario \${widget.remoteUserId}',
+      remoteName: 'Usuario ${widget.remoteUserId}',
       isVideo: widget.isVideo,
       isIncoming: widget.callType == 'receiver',
       answered: answered,
       duration: duration,
     );
+    // Solo el caller envia el status para evitar duplicados
+    if (widget.callType == 'caller') {
+      final myUserId = SocketManager().currentUserId ?? '';
+      SocketManager().send({
+        'type': 'call_status',
+        'to': widget.remoteUserId,
+        'from': myUserId,
+        'status': status,
+        'is_video': widget.isVideo,
+        'duration': duration.inSeconds.toString(),
+        'timestamp': DateTime.now().millisecondsSinceEpoch.toString(),
+      });
+    }
   }
 
   void _cleanup() {
@@ -337,10 +420,31 @@ class CallScreenState extends State<CallScreen> {
     _remoteRenderer.dispose();
   }
 
+  Future<void> cleanupCall() async {
+    if (_closingCall) return;
+    _closingCall = true;
+    try {
+      _localStream?.getTracks().forEach((t) => t.stop());
+      _localRenderer.srcObject = null;
+      _remoteRenderer.srcObject = null;
+      await Future.delayed(const Duration(milliseconds: 300));
+      if (_renderersInitialized) {
+        try { await _localRenderer.dispose(); } catch (_) {}
+        try { await _remoteRenderer.dispose(); } catch (_) {}
+      }
+      try { await _peerConnection?.close(); } catch (_) {}
+      try { await _localStream?.dispose(); } catch (_) {}
+      _localStream = null;
+      _peerConnection = null;
+    } catch (_) {}
+  }
+
   @override
   void dispose() {
+    _disposed = true;
+    _offerRetryTimer?.cancel();
     SocketManager().removeListener(_onSocketMessage);
-    _cleanup();
+    cleanupCall();
     super.dispose();
   }
 
@@ -358,11 +462,12 @@ class CallScreenState extends State<CallScreen> {
                         objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover)
                     : Container(
                         color: Colors.black87,
-                        child: const Center(
+                        child: Center(
                           child: CircleAvatar(
                             radius: 60,
                             backgroundColor: Colors.teal,
-                            child: Icon(Icons.person, size: 60, color: Colors.white),
+                            backgroundImage: _remoteAvatarUrl != null ? CachedNetworkImageProvider(_remoteAvatarUrl!) : null,
+                            child: _remoteAvatarUrl == null ? const Icon(Icons.person, size: 60, color: Colors.white) : null,
                           ),
                         ),
                       ),
@@ -375,14 +480,15 @@ class CallScreenState extends State<CallScreen> {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const CircleAvatar(
+                      CircleAvatar(
                         radius: 60,
                         backgroundColor: Colors.teal,
-                        child: Icon(Icons.person, size: 60, color: Colors.white),
+                        backgroundImage: _remoteAvatarUrl != null ? CachedNetworkImageProvider(_remoteAvatarUrl!) : null,
+                        child: _remoteAvatarUrl == null ? const Icon(Icons.person, size: 60, color: Colors.white) : null,
                       ),
                       const SizedBox(height: 20),
                       Text(
-                        "Usuario ${widget.remoteUserId}",
+                        _remoteName.isNotEmpty ? _remoteName : "Usuario ${widget.remoteUserId}",
                         style: const TextStyle(
                             color: Colors.white,
                             fontSize: 24,

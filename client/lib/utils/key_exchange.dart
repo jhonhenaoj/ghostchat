@@ -62,12 +62,18 @@ class KeyExchange {
 
   // Calcular secreto compartido
   static String computeSharedSecret(String theirPublicHex, String myPrivateHex) {
-    final theirPublic = BigInt.parse(theirPublicHex, radix: 16);
-    final myPrivate = BigInt.parse(myPrivateHex, radix: 16);
-    final sharedSecret = theirPublic.modPow(myPrivate, _p);
-    // Tomar primeros 32 bytes como clave AES-256
-    final hex = sharedSecret.toRadixString(16).padLeft(64, '0');
-    return hex.substring(0, 64);
+    try {
+      if (theirPublicHex.isEmpty || myPrivateHex.isEmpty) return '';
+      final theirPublic = BigInt.parse(theirPublicHex, radix: 16);
+      final myPrivate = BigInt.parse(myPrivateHex, radix: 16);
+      if (theirPublic == BigInt.zero || myPrivate == BigInt.zero) return '';
+      final sharedSecret = theirPublic.modPow(myPrivate, _p);
+      // Tomar primeros 32 bytes como clave AES-256
+      final hex = sharedSecret.toRadixString(16).padLeft(64, '0');
+      return hex.substring(0, 64);
+    } catch (_) {
+      return '';
+    }
   }
 
   // Guardar claves en disco

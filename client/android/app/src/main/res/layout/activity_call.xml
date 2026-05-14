@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#1A1A2E">
+
+    <!-- Fondo degradado superior -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:gravity="center_horizontal"
+        android:paddingTop="80dp">
+
+        <!-- Avatar circular -->
+        <ImageView
+            android:id="@+id/callerAvatar"
+            android:layout_width="100dp"
+            android:layout_height="100dp"
+            android:src="@android:drawable/ic_menu_camera"
+            android:background="@drawable/circle_avatar"
+            android:scaleType="centerCrop"
+            android:clipToOutline="true"
+            android:layout_marginBottom="20dp"/>
+
+        <!-- Nombre -->
+        <TextView
+            android:id="@+id/callerName"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Usuario"
+            android:textColor="#FFFFFF"
+            android:textSize="30sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp"/>
+
+        <!-- Tipo llamada -->
+        <TextView
+            android:id="@+id/callType"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Llamada entrante"
+            android:textColor="#AAAAAA"
+            android:textSize="15sp"/>
+
+    </LinearLayout>
+
+    <!-- Botones en la parte inferior -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_alignParentBottom="true"
+        android:layout_marginBottom="60dp"
+        android:orientation="horizontal"
+        android:gravity="center">
+
+        <!-- Rechazar -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:layout_marginEnd="60dp">
+            <ImageButton
+                android:id="@+id/btnDecline"
+                android:layout_width="70dp"
+                android:layout_height="70dp"
+                android:src="@android:drawable/ic_menu_call"
+                android:backgroundTint="#FF3B30"
+                android:background="@drawable/circle_button_red"
+                android:scaleType="center"
+                android:contentDescription="Rechazar"/>
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Rechazar"
+                android:textColor="#FFFFFF"
+                android:textSize="13sp"
+                android:layout_marginTop="10dp"/>
+        </LinearLayout>
+
+        <!-- Altavoz -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:layout_marginEnd="60dp">
+            <ImageButton
+                android:id="@+id/btnSpeaker"
+                android:layout_width="56dp"
+                android:layout_height="56dp"
+                android:src="@android:drawable/ic_lock_silent_mode_off"
+                android:background="@drawable/circle_button_gray"
+                android:scaleType="center"
+                android:contentDescription="Altavoz"/>
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Altavoz"
+                android:textColor="#AAAAAA"
+                android:textSize="13sp"
+                android:layout_marginTop="10dp"/>
+        </LinearLayout>
+
+        <!-- Contestar -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center">
+            <ImageButton
+                android:id="@+id/btnAccept"
+                android:layout_width="70dp"
+                android:layout_height="70dp"
+                android:src="@android:drawable/ic_menu_call"
+                android:background="@drawable/circle_button_green"
+                android:scaleType="center"
+                android:contentDescription="Contestar"/>
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Contestar"
+                android:textColor="#FFFFFF"
+                android:textSize="13sp"
+                android:layout_marginTop="10dp"/>
+        </LinearLayout>
+
+    </LinearLayout>
+
+</RelativeLayout>

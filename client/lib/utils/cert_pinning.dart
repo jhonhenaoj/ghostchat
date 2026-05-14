@@ -9,9 +9,12 @@ class SecureHttpClient {
 
     // Solo aceptar conexiones al servidor conocido
     httpClient.badCertificateCallback = (cert, host, port) {
-      // En produccion aqui se valida el certificado real
-      // Por ahora solo verificamos el host
-      return host == 'kits-stranger-dimension-grove.trycloudflare.com';
+      // Solo permitir hosts conocidos
+      const allowedHosts = [
+        'api.soluciones-publicitarias-latam.com',
+        '162.243.174.252',
+      ];
+      return allowedHosts.contains(host);
     };
 
     return IOClient(httpClient);

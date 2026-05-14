@@ -23,6 +23,7 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
+  final _nameController = TextEditingController();
   final _emailController = TextEditingController();
   final _emailPassController = TextEditingController();
   final _destEmailController = TextEditingController();
@@ -68,6 +69,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  Future<void> _saveName() async {
+    final name = _nameController.text.trim();
+    if (name.isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('display_name_${widget.myUserId}', name);
+    // Actualizar en servidor
+    try {
+      await http.post(
+        Uri.parse('http://162.243.174.252:9090/update-name'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'user_id': widget.myUserId, 'display_name': name}),
+      );
+    } catch (_) {}
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('✅ Nombre actualizado'), backgroundColor: Colors.green),
+    );
+  }
+
   Future<void> _pickAvatar() async {
     final picker = ImagePicker();
     final file = await picker.pickImage(source: ImageSource.gallery, imageQuality: 80);
@@ -83,7 +102,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         final data = jsonDecode(resp);
         final url = data['url'] as String;
         final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('avatar_url_\${widget.myUserId}', url);
+        await prefs.setString('avatar_url_${widget.myUserId}', url);
         setState(() => _avatarUrl = url);
         if (mounted) ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('✅ Foto de perfil actualizada'), backgroundColor: Colors.green),
@@ -208,18 +227,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
       // 1. Obtener historial del servidor
       final prefs = await SharedPreferences.getInstance();
       final serverUrl = 'http://162.243.174.252:9090';
-      final remoteUserId = widget.myUserId == '1' ? '2' : '1';
-
+      // Obtener todos los contactos guardados
+      final savedContacts = prefs.getStringList('contacts_${widget.myUserId}') ?? [];
+      final allMessages = [];
       setState(() => _status = '📦 Descargando historial...');
-      final historyResp = await http.get(Uri.parse('$serverUrl/history?user_id=${widget.myUserId}&other_id=$remoteUserId'));
-      final historyData = jsonDecode(historyResp.body);
+      for (final otherId in savedContacts) {
+        try {
+          final historyResp = await http.get(Uri.parse('$serverUrl/history?user_id=${widget.myUserId}&other_id=$otherId'));
+          if (historyResp.statusCode == 200) {
+            final historyData = jsonDecode(historyResp.body);
+            allMessages.addAll(historyData['messages'] ?? []);
+          }
+        } catch (_) {}
+      }
 
       // 2. Crear backup completo
       final backup = {
         'user_id': widget.myUserId,
         'username': widget.username,
         'timestamp': DateTime.now().toIso8601String(),
-        'messages': historyData['messages'] ?? [],
+        'messages': allMessages,
       };
 
       // 3. Generar clave de recuperacion aleatoria
@@ -462,9 +489,75 @@ INSTRUCCIONES DE RECUPERACIÓN:
 
                   const SizedBox(height: 32),
 
+                  // Contactos bloqueados
+                  _sectionTitle('🚫 Privacidad'),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: OutlinedButton.icon(
+                      onPressed: () async {
+                        final prefs = await SharedPreferences.getInstance();
+                        final blocked = prefs.getStringList("blocked_${widget.myUserId}") ?? [];
+                        if (!mounted) return;
+                        if (blocked.isEmpty) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('No tienes contactos bloqueados'), backgroundColor: Colors.blue),
+                          );
+                          return;
+                        }
+                        showModalBottomSheet(
+                          context: context,
+                          backgroundColor: const Color(0xFF0D1321),
+                          shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+                          builder: (_) => StatefulBuilder(
+                            builder: (ctx, setModalState) => Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const SizedBox(height: 12),
+                                const Text('Contactos bloqueados', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                                const SizedBox(height: 8),
+                                ...blocked.map((id) => ListTile(
+                                  leading: const Icon(Icons.block, color: Colors.red),
+                                  title: Text(prefs.getString("display_name_$id") ?? id, style: const TextStyle(color: Colors.white)),
+                                  trailing: TextButton(
+                                    onPressed: () async {
+                                      blocked.remove(id);
+                                      await prefs.setStringList("blocked_${widget.myUserId}", blocked);
+                                      // Agregar de vuelta a contactos
+                                      final contacts = prefs.getStringList("contacts_${widget.myUserId}") ?? [];
+                                      if (!contacts.contains(id)) {
+                                        contacts.add(id);
+                                        await prefs.setStringList("contacts_${widget.myUserId}", contacts);
+                                      }
+                                      setModalState(() {});
+                                      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(content: Text('Contacto desbloqueado'), backgroundColor: Colors.green),
+                                      );
+                                    },
+                                    child: const Text('Desbloquear', style: TextStyle(color: Color(0xFF00D4FF))),
+                                  ),
+                                )).toList(),
+                                const SizedBox(height: 16),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.block, color: Colors.red),
+                      label: const Text('Contactos bloqueados', style: TextStyle(color: Colors.red)),
+                      style: OutlinedButton.styleFrom(
+                        side: BorderSide(color: Colors.red.withOpacity(0.4)),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+
                   // Cerrar sesion
                   _sectionTitle('👤 Cuenta'),
                   const SizedBox(height: 12),
+                  const SizedBox(height: 8),
                   SizedBox(
                     width: double.infinity,
                     height: 48,

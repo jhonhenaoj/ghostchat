@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'chat_screen.dart';
+
 
 class ProfileSetupScreen extends StatefulWidget {
   final String myUserId;
@@ -75,10 +75,7 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
   Future<void> _saveAndContinue() async {
     await _saveProfile();
     if (mounted) {
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => ChatScreen(myUserId: widget.myUserId, username: _nameController.text.trim())),
-      );
+      Navigator.pop(context);
     }
   }
 

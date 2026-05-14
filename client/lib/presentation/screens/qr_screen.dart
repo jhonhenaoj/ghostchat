@@ -56,8 +56,18 @@ class _QrScreenState extends State<QrScreen> with SingleTickerProviderStateMixin
       }
       setState(() => _scanned = true);
       final otherId = data['user_id'] as String;
-      final otherName = data['display_name'] as String? ?? 'Usuario';
+      String otherName = data['display_name'] as String? ?? 'Usuario';
       final otherAvatar = data['avatar_index'] as int? ?? 0;
+
+      // Consultar perfil actualizado del servidor
+      try {
+        final profileResp = await http.get(Uri.parse('$_serverUrl/profile?user_id=$otherId'));
+        if (profileResp.statusCode == 200) {
+          final profileData = jsonDecode(profileResp.body);
+          final serverName = profileData['display_name']?.toString() ?? '';
+          if (serverName.isNotEmpty) otherName = serverName;
+        }
+      } catch (_) {}
 
       if (otherId == widget.myUserId) {
         _showError('No puedes agregarte a ti mismo');
@@ -65,16 +75,66 @@ class _QrScreenState extends State<QrScreen> with SingleTickerProviderStateMixin
         return;
       }
 
+      // Pedir nombre personalizado
+      final nameController = TextEditingController(text: otherName);
+      final customName = await showDialog<String>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => AlertDialog(
+          backgroundColor: _surface,
+          title: const Text("Agregar contacto", style: TextStyle(color: Colors.white)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text("¿Con qué nombre guardar este contacto?", style: TextStyle(color: Colors.white70)),
+              const SizedBox(height: 16),
+              TextField(
+                controller: nameController,
+                autofocus: true,
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(hintText: "Nombre del contacto", hintStyle: TextStyle(color: Colors.white38)),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, null), child: const Text("Cancelar")),
+            ElevatedButton(onPressed: () => Navigator.pop(context, nameController.text.trim().isEmpty ? otherName : nameController.text.trim()), child: const Text("Guardar")),
+          ],
+        ),
+      );
+      if (customName == null) { setState(() => _scanned = false); return; }
       // Guardar contacto localmente
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('display_name_$otherId', otherName);
+      await prefs.setString('display_name_$otherId', customName!);
       await prefs.setInt('avatar_index_$otherId', otherAvatar);
+
+      // Remover de lista negra si fue eliminado antes
+      final deletedList = prefs.getStringList('deleted_contacts_${widget.myUserId}') ?? [];
+      deletedList.remove(otherId);
+      await prefs.setStringList('deleted_contacts_${widget.myUserId}', deletedList);
 
       // Agregar a lista de contactos
       final contacts = prefs.getStringList('contacts_${widget.myUserId}') ?? [];
       if (!contacts.contains(otherId)) {
         contacts.add(otherId);
         await prefs.setStringList('contacts_${widget.myUserId}', contacts);
+      }
+      // Sincronizar con servidor (formato id:nombre)
+      try {
+        final prefs2 = await SharedPreferences.getInstance();
+        final entries = contacts.map((id) {
+          final name = prefs2.getString('display_name_$id') ?? 'Usuario';
+          return '$id:${Uri.encodeComponent(name)}';
+        }).toList();
+        debugPrint('📤 Sincronizando contactos: ${entries.join(',')}');
+        final syncResp = await http.post(
+          Uri.parse('http://162.243.174.252:9090/contacts/save'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'user_id': widget.myUserId, 'contacts': entries.join(',')}),
+        );
+        debugPrint('📤 Respuesta servidor: ${syncResp.statusCode} ${syncResp.body}');
+      } catch (e) {
+        debugPrint('❌ Error sincronizando: $e');
       }
 
       if (mounted) {
@@ -90,7 +150,7 @@ class _QrScreenState extends State<QrScreen> with SingleTickerProviderStateMixin
               children: [
                 GhostAvatar(avatarIndex: otherAvatar, size: 64),
                 const SizedBox(height: 12),
-                Text(otherName, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                Text(customName!, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 8),
                 const Text('Contacto agregado exitosamente', style: TextStyle(color: Colors.white54)),
               ],
@@ -107,7 +167,7 @@ class _QrScreenState extends State<QrScreen> with SingleTickerProviderStateMixin
                   Navigator.push(context, MaterialPageRoute(
                     builder: (_) => ChatScreen(
                       myUserId: widget.myUserId,
-                      username: otherName,
+                      username: customName!,
                       remoteUserId: otherId,
                     ),
                   ));

@@ -14,6 +14,7 @@ class SocketManager {
   Timer? _heartbeatTimer;
   Timer? _reconnectTimer;
   bool _isConnecting = false;
+  bool isConnected = false;
 
   // Listeners registrados
   final List<Function(Map<String, dynamic>)> _listeners = [];
@@ -46,27 +47,27 @@ class SocketManager {
 
     try {
       _channel = IOWebSocketChannel.connect(
-        'wss://api.soluciones-publicitarias-latam.com/ws?user_id=$_userId',
+        'ws://162.243.174.252:9090/ws?user_id=$_userId',
         pingInterval: const Duration(seconds: 10),
       );
-      _channel!.stream.listen(
+      isConnected = true;
+    _channel!.stream.listen(
         (data) {
           try {
+            // Parsear una sola vez
             final msg = jsonDecode(data as String) as Map<String, dynamic>;
+            // Guardar offer pendiente globalmente
+            if (msg['type'] == 'offer') {
+              pendingOffer = msg['sdp']?.toString();
+              pendingOfferFrom = msg['from']?.toString();
+            }
             for (final listener in List.from(_listeners)) {
               listener(msg);
             }
           } catch (_) {}
-          // Guardar offer pendiente globalmente
-          try {
-            final msg2 = jsonDecode(data as String) as Map<String, dynamic>;
-            if (msg2['type'] == 'offer') {
-              pendingOffer = msg2['sdp']?.toString();
-              pendingOfferFrom = msg2['from']?.toString();
-            }
-          } catch (_) {}
         },
         onDone: () {
+        isConnected = false;
           _isConnecting = false;
           debugPrint("🔴 Socket desconectado, reconectando...");
           _scheduleReconnect();
@@ -79,6 +80,7 @@ class SocketManager {
       );
       _isConnecting = false;
       _startHeartbeat();
+      _flushPendingMessages();
       debugPrint("✅ Socket conectado para usuario $_userId");
     } catch (e) {
       _isConnecting = false;
@@ -99,10 +101,31 @@ class SocketManager {
     });
   }
 
+  final List<Map<String, dynamic>> _pendingMessages = [];
+
   void send(Map<String, dynamic> msg) {
     try {
+      if (_channel == null) {
+        debugPrint('⚠️ Socket no conectado, guardando mensaje en cola...');
+        _pendingMessages.add(msg);
+        if (_userId != null) connect(_userId!);
+        return;
+      }
       _channel?.sink.add(jsonEncode(msg));
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('❌ Error enviando mensaje: $e');
+      _pendingMessages.add(msg);
+    }
+  }
+
+  void _flushPendingMessages() {
+    if (_pendingMessages.isEmpty) return;
+    final pending = List.from(_pendingMessages);
+    _pendingMessages.clear();
+    for (final msg in pending) {
+      _channel?.sink.add(jsonEncode(msg));
+    }
+    debugPrint('📤 Enviados ${pending.length} mensajes pendientes');
   }
 
   void disconnect() {

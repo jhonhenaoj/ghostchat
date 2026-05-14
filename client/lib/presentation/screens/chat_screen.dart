@@ -11,6 +11,7 @@ import 'package:map_launcher/map_launcher.dart';
 import 'package:video_player/video_player.dart';
 import 'package:photo_view/photo_view.dart';
 import 'package:flutter/material.dart';
+import 'package:animations/animations.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
@@ -21,12 +22,19 @@ import 'package:flutter_sound/flutter_sound.dart';
 import 'package:audio_waveforms/audio_waveforms.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'call_screen.dart';
+import 'contact_profile_screen.dart';
+import 'live_location_map_screen.dart';
+import 'fake_location_screen.dart';
+import 'package:latlong2/latlong.dart';
 import 'settings_screen.dart';
 import 'call_history_screen.dart';
 import 'profile_setup_screen.dart';
 import 'camera_screen.dart';
 import 'package:camera/camera.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:any_link_preview/any_link_preview.dart';
+import 'package:flutter_image_compress/flutter_image_compress.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 
@@ -66,17 +74,23 @@ class _ChatScreenState extends State<ChatScreen> {
 
   // Funciones de mensaje
   Map<String, dynamic>? _replyingTo;
+  final Map<String, StreamController<Map<String, dynamic>>> _liveLocationStreams = {};
   bool _showEmoji = false;
-  Map<int, String> _reactions = {};
   Timer? _liveLocationTimer;
   Set<int> _selectedMessages = {};
   bool _isSelecting = false;
   bool _isTyping = false;
   bool _remoteIsTyping = false;
+  bool _remoteTyping = false;
+  String _remoteLastSeen = '';
+  bool _remoteOnline = false;
   Timer? _typingTimer;
   Timer? _heartbeatTimer;
   Timer? _reconnectTimer;
   bool _searchMode = false;
+  bool _loadingMore = false;
+  bool _hasMore = true;
+  String? _oldestTimestamp;
   String _searchQuery = '';
   int? _destroySeconds;
   final TextEditingController _searchController = TextEditingController();
@@ -101,6 +115,19 @@ class _ChatScreenState extends State<ChatScreen> {
     initAudio();
     initSocket();
     Future.delayed(const Duration(milliseconds: 500), () => _loadHistory());
+    _controller.addListener(() {
+      if (_controller.text.isNotEmpty && !_isTyping) {
+        _isTyping = true;
+        SocketManager().send({'type': 'typing', 'to': remoteUserId});
+      }
+      _typingTimer?.cancel();
+      _typingTimer = Timer(const Duration(seconds: 2), () {
+        if (_isTyping) {
+          _isTyping = false;
+          SocketManager().send({'type': 'typing_stop', 'to': remoteUserId});
+        }
+      });
+    });
     if (widget.autoAnswerCall) {
       _waitingToAutoAnswer = true;
       _pendingCallerId = widget.remoteUserId;
@@ -109,6 +136,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _initFCM();
     _initKeyExchange();
     _loadRemoteAvatar();
+    _loadOnlineStatus();
     _markMessagesAsRead();
     _loadDeletedMessages();
   }
@@ -155,23 +183,44 @@ class _ChatScreenState extends State<ChatScreen> {
         final data = jsonDecode(response.body);
         final List<dynamic> msgs = data["messages"];
         debugPrint("📦 Mensajes cargados: " + msgs.length.toString());
+        final parsed = msgs.map((m) => Map<String, dynamic>.from(m)).toList();
         setState(() {
-          messages = msgs.map((m) {
-            final msg = Map<String, dynamic>.from(m);
-            if (msg["type"] == "text" && msg["message"] != null) {
-              msg["message"] = GhostCrypto.decrypt(msg["message"].toString());
-            }
-            if (msg["reply_to"] != null) {
-              msg["reply_to"] = GhostCrypto.decrypt(msg["reply_to"].toString());
-            }
-            return msg;
-          }).toList();
+          messages = parsed;
+          if (parsed.isNotEmpty) {
+            _oldestTimestamp = parsed.first['timestamp']?.toString();
+          }
+          _hasMore = parsed.length >= 50;
         });
         _scrollToBottom();
       }
     } catch (e) {
       debugPrint("❌ Error cargando historial: $e");
     }
+  }
+
+  Future<void> _loadMore() async {
+    if (_loadingMore || !_hasMore || _oldestTimestamp == null) return;
+    setState(() => _loadingMore = true);
+    try {
+      final response = await http.get(
+        Uri.parse("\$serverUrl/history?user_id=\${widget.myUserId}&other_id=\$remoteUserId&before=\$_oldestTimestamp"),
+      );
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final List<dynamic> msgs = data["messages"];
+        final parsed = msgs.map((m) => Map<String, dynamic>.from(m)).toList();
+        if (parsed.isNotEmpty) {
+          setState(() {
+            messages = [...parsed, ...messages];
+            _oldestTimestamp = parsed.first['timestamp']?.toString();
+            _hasMore = parsed.length >= 50;
+          });
+        } else {
+          setState(() => _hasMore = false);
+        }
+      }
+    } catch (_) {}
+    setState(() => _loadingMore = false);
   }
 
   void _scrollToBottom() {
@@ -220,21 +269,56 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _loadRemoteAvatar() async {
+    debugPrint('🔍 _loadRemoteAvatar llamado remoteUserId: ' + remoteUserId);
     final prefs = await SharedPreferences.getInstance();
     setState(() {
-      _myAvatarIndex = prefs.getInt('avatar_index_\${widget.myUserId}') ?? 0;
+      _myAvatarIndex = prefs.getInt('avatar_index_${widget.myUserId}') ?? 0;
       _remoteAvatarIndex = prefs.getInt('avatar_index_$remoteUserId') ?? 0;
-      _displayName = prefs.getString('display_name_\${widget.myUserId}') ?? widget.username;
+      _displayName = prefs.getString('display_name_${widget.myUserId}') ?? widget.username;
     });
     final url = prefs.getString('avatar_url_$remoteUserId');
     if (url != null) setState(() => _remoteAvatarUrl = url);
-    // Intentar cargar desde servidor
+    // Cargar desde servidor via profile
     try {
-      final resp = await http.get(Uri.parse('$serverUrl/avatar/$remoteUserId'));
+      final resp = await http.get(Uri.parse('$serverUrl/profile?user_id=$remoteUserId'));
       if (resp.statusCode == 200) {
-        final avatarUrl = '$serverUrl/avatars/$remoteUserId.jpg';
-        await prefs.setString('avatar_url_$remoteUserId', avatarUrl);
+        final data = jsonDecode(resp.body);
+        final avatarUrl = data['avatar_url']?.toString() ?? '';
+        if (avatarUrl.isNotEmpty) {
+          await prefs.setString('avatar_url_$remoteUserId', avatarUrl);
+          debugPrint('🖼️ Avatar cargado: ' + avatarUrl);
         if (mounted) setState(() => _remoteAvatarUrl = avatarUrl);
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _loadOnlineStatus() async {
+    try {
+      final resp = await http.get(Uri.parse('$serverUrl/online'));
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        final online = List<String>.from(data['online']);
+        if (mounted) setState(() => _remoteOnline = online.contains(remoteUserId));
+      }
+      final profileResp = await http.get(Uri.parse('$serverUrl/profile?user_id=$remoteUserId'));
+      if (profileResp.statusCode == 200) {
+        final data = jsonDecode(profileResp.body);
+        final lastSeen = data['last_seen']?.toString() ?? '';
+        if (lastSeen.isNotEmpty && mounted) {
+          try {
+            final dt = DateTime.parse(lastSeen.replaceAll(' ', 'T'));
+            final now = DateTime.now();
+            final diff = now.difference(dt);
+            String formatted;
+            if (diff.inMinutes < 1) formatted = 'hace un momento';
+            else if (diff.inHours < 1) formatted = 'hace ' + diff.inMinutes.toString() + ' min';
+            else if (diff.inDays < 1) formatted = 'hoy a las ' + dt.hour.toString().padLeft(2, '0') + ':' + dt.minute.toString().padLeft(2, '0');
+            else if (diff.inDays == 1) formatted = 'ayer';
+            else formatted = dt.day.toString() + '/' + dt.month.toString();
+            setState(() => _remoteLastSeen = 'Última vez ' + formatted);
+          } catch (_) {}
+        }
       }
     } catch (_) {}
   }
@@ -279,13 +363,38 @@ class _ChatScreenState extends State<ChatScreen> {
     SocketManager().addListener(_onSocketMessage);
   }
 
-  void _onSocketMessage(Map<String, dynamic> msg) {
+  void _onSocketMessage(Map<String, dynamic> msg) async {
     if (!mounted) return;
     final type = msg["type"]?.toString() ?? "";
     final from = msg["from"]?.toString() ?? "";
     // Permitir mensajes WebRTC aunque no tengan from correcto
+    // Verificar si el contacto está bloqueado
+    final prefs = await SharedPreferences.getInstance();
+    final blocked = prefs.getStringList("blocked_${widget.myUserId}") ?? [];
+    if (blocked.contains(from) && type != "read") return;
     final isWebRTC = type == "offer" || type == "answer" || type == "ice" || type == "call" || type == "hangup";
     if (!isWebRTC && from != remoteUserId && from != widget.myUserId) return;
+    if (type == "user_online") {
+      if (msg["user_id"]?.toString() == remoteUserId) {
+        setState(() { _remoteOnline = true; _remoteLastSeen = ''; });
+      }
+      return;
+    }
+    if (type == "user_offline") {
+      if (msg["user_id"]?.toString() == remoteUserId) {
+        setState(() => _remoteOnline = false);
+        _loadOnlineStatus();
+      }
+      return;
+    }
+    if (type == "typing") {
+      if (mounted) setState(() => _remoteTyping = true);
+      return;
+    }
+    if (type == "typing_stop") {
+      if (mounted) setState(() => _remoteTyping = false);
+      return;
+    }
     if (type == "read_receipt") {
       setState(() {
         for (var m in messages) {
@@ -305,6 +414,10 @@ class _ChatScreenState extends State<ChatScreen> {
           }
         }
       });
+      // Enviar al stream del mapa si esta abierto
+      if (_liveLocationStreams.containsKey(liveId)) {
+        _liveLocationStreams[liveId]!.add(msg);
+      }
       return;
     }
     if (type == "dh_public_key") {
@@ -339,7 +452,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     if (type == "edit") {
       final ts = msg["target_timestamp"]?.toString() ?? "";
-      final newText = GhostCrypto.decrypt(msg["new_message"]?.toString() ?? "");
+      final newText = msg["new_message"]?.toString() ?? "";
       setState(() {
         for (var m in messages) {
           if (m["timestamp"]?.toString() == ts) {
@@ -359,10 +472,10 @@ class _ChatScreenState extends State<ChatScreen> {
     if (type == "ice" && _inCall) { _callKey.currentState?.handleIce(msg); return; }
     // Mensaje normal
     if (msg["type"] == "text" && msg["message"] != null) {
-      msg["message"] = GhostCrypto.decrypt(msg["message"].toString());
+      // sin cifrado
     }
     if (msg["reply_to"] != null) {
-      msg["reply_to"] = GhostCrypto.decrypt(msg["reply_to"].toString());
+      // sin cifrado
     }
     setState(() => messages.add(msg));
     _scrollToBottom();
@@ -396,10 +509,10 @@ class _ChatScreenState extends State<ChatScreen> {
       if (type == "edit") { _handleRemoteEdit(msg); return; }
 
       if (msg["type"] == "text" && msg["message"] != null) {
-        msg["message"] = GhostCrypto.decrypt(msg["message"].toString());
+        // sin cifrado
       }
       if (msg["reply_to"] != null) {
-        msg["reply_to"] = GhostCrypto.decrypt(msg["reply_to"].toString());
+        // sin cifrado
       }
       setState(() => messages.add(msg));
       _scrollToBottom();
@@ -421,7 +534,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _handleRemoteEdit(Map<String, dynamic> msg) {
     final timestamp = msg["target_timestamp"]?.toString();
-    final newText = GhostCrypto.decrypt(msg["new_message"]?.toString() ?? "");
+    final newText = msg["new_message"]?.toString() ?? "";
     setState(() {
       for (var m in messages) {
         if (m["timestamp"]?.toString() == timestamp) {
@@ -636,12 +749,12 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
-    final encrypted = GhostCrypto.encrypt(text);
+    final encrypted = text;
     final msgData = {
       "to": remoteUserId,
       "type": "text",
       "message": encrypted,
-      if (_replyingTo != null) "reply_to": GhostCrypto.encrypt(_replyingTo!["message"]?.toString() ?? ""),
+      if (_replyingTo != null) "reply_to": _replyingTo!["message"]?.toString() ?? "",
       if (_replyingTo != null) "reply_from": _replyingTo!["from"]?.toString() ?? "",
     };
     SocketManager().send(msgData);
@@ -690,6 +803,14 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     } else {
       // Enviar foto como imagen
+      // Comprimir imagen antes de subir
+      final compressed = await FlutterImageCompress.compressWithFile(
+        file.path, quality: 70, minWidth: 800, minHeight: 800,
+      );
+      final tempDir = await getTemporaryDirectory();
+      final compressedFile = File('${tempDir.path}/compressed_${DateTime.now().millisecondsSinceEpoch}.jpg');
+      if (compressed != null) await compressedFile.writeAsBytes(compressed);
+      final uploadFile = compressed != null ? compressedFile : file;
       final request = http.MultipartRequest("POST", Uri.parse("$serverUrl/upload"));
       request.files.add(await http.MultipartFile.fromPath("file", file.path));
       final response = await request.send();
@@ -709,6 +830,14 @@ class _ChatScreenState extends State<ChatScreen> {
     if (file == null) return;
     setState(() => isSendingFile = true);
     try {
+      // Comprimir imagen antes de subir
+      final compressed = await FlutterImageCompress.compressWithFile(
+        file.path, quality: 70, minWidth: 800, minHeight: 800,
+      );
+      final tempDir = await getTemporaryDirectory();
+      final compressedFile = File('${tempDir.path}/compressed_${DateTime.now().millisecondsSinceEpoch}.jpg');
+      if (compressed != null) await compressedFile.writeAsBytes(compressed);
+      final uploadFile = compressed != null ? compressedFile : file;
       final request = http.MultipartRequest("POST", Uri.parse("$serverUrl/upload"));
       request.files.add(await http.MultipartFile.fromPath("file", file.path));
       final client = http.Client();
@@ -801,7 +930,6 @@ class _ChatScreenState extends State<ChatScreen> {
     final replyTo = msg["reply_to"]?.toString();
     final edited = msg["edited"] == true;
     final isSelected = _selectedMessages.contains(index);
-    final reaction = _reactions[index];
 
     Widget content;
 
@@ -812,15 +940,80 @@ class _ChatScreenState extends State<ChatScreen> {
           builder: (_) => Scaffold(
             backgroundColor: Colors.black,
             appBar: AppBar(backgroundColor: Colors.black, foregroundColor: Colors.white),
-            body: Center(child: PhotoView(imageProvider: NetworkImage(imgUrl))),
+            body: Center(child: PhotoView(imageProvider: CachedNetworkImageProvider(imgUrl))),
           ),
         )),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(12),
-          child: Image.network(imgUrl, width: 220, height: 180, fit: BoxFit.cover,
-            loadingBuilder: (_, child, progress) => progress == null ? child :
-              Container(width: 220, height: 180, color: const Color(0xFF1A2235),
-                child: const Center(child: CircularProgressIndicator(color: Color(0xFF00D4FF), strokeWidth: 2))),
+          child: CachedNetworkImage(
+            imageUrl: imgUrl, width: 220, height: 180, fit: BoxFit.cover,
+            placeholder: (_, __) => Container(width: 220, height: 180, color: const Color(0xFF1A2235),
+              child: const Center(child: CircularProgressIndicator(color: Color(0xFF00D4FF), strokeWidth: 2))),
+            errorWidget: (_, __, ___) => const Icon(Icons.broken_image, color: Colors.white38),
+          ),
+        ),
+      );
+    } else if (type == "call_status") {
+      final callStatus = msg["status"]?.toString() ?? "missed";
+      final isVideo = msg["is_video"] == true;
+      final duration = msg["duration"]?.toString() ?? "0";
+      final isMe = msg["from"]?.toString() == widget.myUserId;
+      
+      IconData callIcon;
+      String callText;
+      Color callColor;
+      
+      if (callStatus == "missed") {
+        callIcon = isMe ? Icons.call_missed_outgoing : Icons.call_missed;
+        callText = isVideo ? "📹 Videollamada perdida" : "📞 Llamada perdida";
+        callColor = Colors.red;
+      } else if (callStatus == "rejected") {
+        callIcon = Icons.call_end;
+        callText = isVideo ? "📹 Videollamada rechazada" : "📞 Llamada rechazada";
+        callColor = Colors.orange;
+      } else {
+        final secs = int.tryParse(duration) ?? 0;
+        final mins = secs ~/ 60;
+        final secsLeft = secs % 60;
+        final durationStr = '${mins.toString().padLeft(2, '0')}:${secsLeft.toString().padLeft(2, '0')}';
+        callIcon = isVideo ? Icons.videocam : Icons.call;
+        callText = isVideo ? "📹 Videollamada · $durationStr" : "📞 Llamada · $durationStr";
+        callColor = Colors.green;
+      }
+      
+      content = Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: callColor.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: callColor.withOpacity(0.3)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(callIcon, color: callColor, size: 20),
+            const SizedBox(width: 8),
+            Text(callText, style: TextStyle(color: callColor, fontWeight: FontWeight.w500)),
+          ],
+        ),
+      );
+    } else if (type == "giphy") {
+      final gifUrl = msg["url"]?.toString() ?? "";
+      content = GestureDetector(
+        onTap: () => Navigator.push(context, MaterialPageRoute(
+          builder: (_) => Scaffold(
+            backgroundColor: Colors.black,
+            appBar: AppBar(backgroundColor: Colors.black, foregroundColor: Colors.white),
+            body: Center(child: CachedNetworkImage(imageUrl: gifUrl, fit: BoxFit.contain)),
+          ),
+        )),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: CachedNetworkImage(
+            imageUrl: gifUrl, width: 200, height: 160, fit: BoxFit.cover,
+            placeholder: (_, __) => Container(width: 200, height: 160, color: const Color(0xFF1A2235),
+              child: const Center(child: Text('GIF', style: TextStyle(color: Colors.white38, fontWeight: FontWeight.bold)))),
+            errorWidget: (_, __, ___) => const Icon(Icons.gif, color: Colors.white38, size: 40),
           ),
         ),
       );
@@ -829,6 +1022,51 @@ class _ChatScreenState extends State<ChatScreen> {
       final isLive = type == "live_location";
       content = GestureDetector(
         onTap: () async {
+          // Si es live_location, abrir mapa en tiempo real
+          if (isLive) {
+            final liveId = msg["live_id"]?.toString() ?? "";
+            if (!_liveLocationStreams.containsKey(liveId)) {
+              _liveLocationStreams[liveId] = StreamController<Map<String, dynamic>>.broadcast();
+            }
+            // Parsear ubicacion inicial del mensaje
+            LatLng? initialLocation;
+            try {
+              debugPrint('🗺️ locUrl: $locUrl');
+              final cleanUrl = locUrl.replaceAll("https://maps.google.com/?q=", "");
+              debugPrint('🗺️ cleanUrl: $cleanUrl');
+              final coords = cleanUrl.split(",");
+              debugPrint('🗺️ coords: $coords length: ${coords.length}');
+              if (coords.length >= 2) {
+                final lat = double.tryParse(coords[0].trim());
+                final lng = double.tryParse(coords[1].trim());
+                debugPrint('🗺️ lat: $lat lng: $lng');
+                if (lat != null && lng != null) {
+                  initialLocation = LatLng(lat, lng);
+                  debugPrint('🗺️ initialLocation: $initialLocation');
+                }
+              }
+            } catch (e) {
+              debugPrint('🗺️ Error parseando: $e');
+            }
+            final isMe = msg["from"]?.toString() == widget.myUserId;
+            // Enviar ubicacion inicial al stream
+            if (initialLocation != null) {
+              Future.delayed(const Duration(milliseconds: 100), () {
+                if (_liveLocationStreams.containsKey(liveId)) {
+                  _liveLocationStreams[liveId]!.add(msg);
+                }
+              });
+            }
+            Navigator.push(context, MaterialPageRoute(
+              builder: (_) => LiveLocationMapScreen(
+                contactName: isMe ? 'Mi ubicación' : widget.username,
+                locationStream: _liveLocationStreams[liveId]!.stream,
+                initialLocation: initialLocation,
+                isMe: isMe,
+              ),
+            ));
+            return;
+          }
           final coords = locUrl.replaceAll("https://maps.google.com/?q=", "").split(",");
           if (coords.length < 2) return;
           final lat = double.tryParse(coords[0]) ?? 0;
@@ -918,6 +1156,31 @@ class _ChatScreenState extends State<ChatScreen> {
               child: Text("-> " + replyTo, style: const TextStyle(fontSize: 12, fontStyle: FontStyle.italic, color: Colors.white70), maxLines: 2, overflow: TextOverflow.ellipsis),
             ),
           Text(msg["message"]?.toString() ?? "", style: const TextStyle(color: Colors.white), softWrap: true, overflow: TextOverflow.visible),
+          if (_hasUrl(msg["message"]?.toString() ?? ""))
+            Builder(builder: (_) {
+              final url = _extractUrl(msg["message"]?.toString() ?? "");
+              if (url == null) return const SizedBox.shrink();
+              return Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: AnyLinkPreview(
+                    link: url,
+                    displayDirection: UIDirection.uiDirectionVertical,
+                    showMultimedia: true,
+                    bodyMaxLines: 2,
+                    bodyTextOverflow: TextOverflow.ellipsis,
+                    titleStyle: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                    bodyStyle: const TextStyle(color: Colors.white70, fontSize: 12),
+                    backgroundColor: const Color(0xFF1A2235),
+                    borderRadius: 12,
+                    removeElevation: true,
+                    errorWidget: const SizedBox.shrink(),
+                    cache: const Duration(hours: 24),
+                  ),
+                ),
+              );
+            }),
           if (edited)
             Text("editado", style: TextStyle(fontSize: 10, color: isMe ? Colors.white60 : Colors.grey)),
           if (type == "text")
@@ -945,17 +1208,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     return GestureDetector(
       onLongPress: () {
-        if (_isSelecting) {
-          setState(() {
-            if (isSelected) _selectedMessages.remove(index);
-            else _selectedMessages.add(index);
-          });
-        } else {
-          setState(() {
-            _isSelecting = true;
-            _selectedMessages.add(index);
-          });
-        }
+        _showMessageOptions(index, msg);
       },
       onTap: () {
         if (_isSelecting) {
@@ -996,15 +1249,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     if (isStarred) const Positioned(top: 0, right: 0, child: Icon(Icons.star, size: 14, color: Colors.amber)),
                     if (isPinned) const Positioned(top: 0, left: 0, child: Icon(Icons.push_pin, size: 14, color: Colors.purple)),
                   ],
-                ),
-                if (reaction != null)
-                  Container(
-                    margin: const EdgeInsets.only(top: 2),
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 2)]),
-                    child: Text(reaction, style: const TextStyle(fontSize: 16)),
-                  ),
-              ],
+                ),],
             ),
           ),
         ),
@@ -1022,7 +1267,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 icon: const Icon(Icons.close, color: Colors.white),
                 onPressed: () => setState(() { _isSelecting = false; _selectedMessages.clear(); }),
               ),
-              title: Text('\${_selectedMessages.length} seleccionado(s)', style: const TextStyle(color: Colors.white)),
+              title: Text('${_selectedMessages.length} seleccionado(s)', style: const TextStyle(color: Colors.white)),
               actions: [
                 IconButton(
                   icon: const Icon(Icons.delete, color: Colors.red),
@@ -1039,16 +1284,36 @@ class _ChatScreenState extends State<ChatScreen> {
           : AppBar(
               backgroundColor: const Color(0xFF0D1321),
               elevation: 0,
-              title: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            GhostAvatar(avatarIndex: _remoteAvatarIndex, size: 40),
-            const SizedBox(width: 10),
-            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(widget.username, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white)),
-              const Text("● Online", style: TextStyle(fontSize: 11, color: Color(0xFF00D4FF))),
-            ]),
-          ],
+              title: GestureDetector(
+          onTap: () => Navigator.push(context, MaterialPageRoute(
+            builder: (_) => ContactProfileScreen(
+              contactId: remoteUserId,
+              contactName: widget.username,
+              myUserId: widget.myUserId,
+            ),
+          )),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircleAvatar(
+                radius: 20,
+                backgroundColor: const Color(0xFF2A3550),
+                backgroundImage: _remoteAvatarUrl != null ? CachedNetworkImageProvider(_remoteAvatarUrl!) : null,
+                child: _remoteAvatarUrl == null ? Text(
+                  widget.username.isNotEmpty ? widget.username[0].toUpperCase() : 'U',
+                  style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                ) : null,
+              ),
+              const SizedBox(width: 10),
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(widget.username, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white)),
+                Text(
+                  _remoteTyping ? "✍️ escribiendo..." : (_remoteOnline ? "● En línea" : (_remoteLastSeen.isNotEmpty ? _remoteLastSeen : "")),
+                  style: TextStyle(fontSize: 11, color: _remoteOnline ? const Color(0xFF00D4FF) : Colors.white54),
+                ),
+              ]),
+            ],
+          ),
         ),
         actions: [
           IconButton(
@@ -1156,7 +1421,21 @@ class _ChatScreenState extends State<ChatScreen> {
               child: ListView.builder(
                 controller: _scrollController,
                 itemCount: messages.length,
-                itemBuilder: (_, i) => buildMessage(i, messages[i]),
+                itemBuilder: (_, i) {
+                  final msg = messages[i];
+                  return TweenAnimationBuilder<double>(
+                    tween: Tween(begin: 0.0, end: 1.0),
+                    duration: const Duration(milliseconds: 200),
+                    builder: (context, value, child) => Opacity(
+                      opacity: value,
+                      child: Transform.translate(
+                        offset: Offset(0, 20 * (1 - value)),
+                        child: child,
+                      ),
+                    ),
+                    child: buildMessage(i, msg),
+                  );
+                },
               ),
             ),
             if (_remoteIsTyping)
@@ -1176,10 +1455,23 @@ class _ChatScreenState extends State<ChatScreen> {
             if (isSendingFile) const LinearProgressIndicator(color: Color(0xFF00D4FF)),
             if (_showEmoji) SizedBox(
               height: 250,
-              child: EmojiPicker(onEmojiSelected: (_, emoji) => setState(() {
-                _controller.text += emoji.emoji;
-                _showEmoji = false;
-              })),
+              child: EmojiPicker(
+                onEmojiSelected: (_, emoji) => setState(() {
+                  // Insertar emoji en la posicion del cursor
+                  final text = _controller.text;
+                  final selection = _controller.selection;
+                  final newText = text.replaceRange(
+                    selection.start < 0 ? text.length : selection.start,
+                    selection.end < 0 ? text.length : selection.end,
+                    emoji.emoji,
+                  );
+                  _controller.text = newText;
+                  _controller.selection = TextSelection.collapsed(
+                    offset: (selection.start < 0 ? text.length : selection.start) + emoji.emoji.length,
+                  );
+                  // NO cerrar el picker para poder seleccionar varios emojis
+                }),
+              ),
             ),
             if (_replyingTo != null)
               Container(
@@ -1263,8 +1555,8 @@ class _ChatScreenState extends State<ChatScreen> {
                           ),
                           // Emoji dentro del campo
                           IconButton(
-                            icon: Icon(Icons.emoji_emotions, color: Colors.white.withOpacity(0.4), size: 20),
-                            onPressed: () => setState(() => _showEmoji = !_showEmoji),
+                            icon: Icon(Icons.emoji_emotions, color: _showEmoji ? const Color(0xFF00D4FF) : Colors.white.withOpacity(0.4), size: 20),
+                            onPressed: () => setState(() { _showEmoji = !_showEmoji; }),
                             padding: EdgeInsets.zero,
                             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                           ),
@@ -1323,7 +1615,7 @@ class _ChatScreenState extends State<ChatScreen> {
       builder: (_) => AlertDialog(
         backgroundColor: const Color(0xFF0D1321),
         title: const Text('Eliminar mensajes', style: TextStyle(color: Colors.white)),
-        content: Text('¿Eliminar \${_selectedMessages.length} mensaje(s)?', style: const TextStyle(color: Colors.white70)),
+        content: Text('¿Eliminar ${_selectedMessages.length} mensaje(s)?', style: const TextStyle(color: Colors.white70)),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancelar')),
           TextButton(
@@ -1365,6 +1657,17 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   // ── Typing indicator ──
+  bool _hasUrl(String text) {
+    final urlRegex = RegExp(r'https?://[^\s]+', caseSensitive: false);
+    return urlRegex.hasMatch(text);
+  }
+
+  String? _extractUrl(String text) {
+    final urlRegex = RegExp(r'https?://[^\s]+', caseSensitive: false);
+    final match = urlRegex.firstMatch(text);
+    return match?.group(0);
+  }
+
   void _sendTyping() {
     SocketManager().send({'type': 'typing', 'to': remoteUserId});
     _typingTimer?.cancel();
@@ -1406,20 +1709,92 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   // ── Reenviar mensaje ──
-  void _forwardMessage(Map<String, dynamic> msg) {
-    final type = msg["type"]?.toString() ?? "";
-    if (type == "text") {
-      final text = msg["message"]?.toString() ?? "";
-      final encrypted = GhostCrypto.encrypt("↪ $text");
-      final msgData = {"to": remoteUserId, "type": "text", "message": encrypted};
-      SocketManager().send(msgData);
-      setState(() => messages.add({...msgData, "from": widget.myUserId, "message": "↪ $text", "timestamp": DateTime.now().millisecondsSinceEpoch.toString()}));
-      _scrollToBottom();
-    } else if (type == "image" || type == "audio" || type == "file") {
-      SocketManager().send({...msg, "to": remoteUserId, "from": widget.myUserId});
-      setState(() => messages.add({...msg, "from": widget.myUserId, "timestamp": DateTime.now().millisecondsSinceEpoch.toString()}));
-      _scrollToBottom();
+  Future<void> _forwardMessage(Map<String, dynamic> msg) async {
+    final prefs = await SharedPreferences.getInstance();
+    final contactIds = prefs.getStringList("contacts_${widget.myUserId}") ?? [];
+    if (contactIds.isEmpty) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No tienes contactos'), backgroundColor: Colors.red),
+      );
+      return;
     }
+
+    // Construir lista de contactos
+    final contacts = contactIds.map((id) {
+      final name = prefs.getString("display_name_$id") ?? id;
+      return {"id": id, "name": name};
+    }).toList();
+
+    // Mostrar selector de contactos
+    final selected = await showModalBottomSheet<List<String>>(
+      context: context,
+      backgroundColor: const Color(0xFF0D1321),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (_) {
+        final selectedIds = <String>{};
+        return StatefulBuilder(
+          builder: (ctx, setModalState) => Column(
+            children: [
+              const SizedBox(height: 12),
+              const Text('Reenviar a...', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+              const SizedBox(height: 8),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: contacts.length,
+                  itemBuilder: (_, i) {
+                    final c = contacts[i];
+                    final isSelected = selectedIds.contains(c["id"]);
+                    return ListTile(
+                      leading: CircleAvatar(
+                        backgroundColor: const Color(0xFF2A3550),
+                        child: Text(c["name"]![0].toUpperCase(), style: const TextStyle(color: Colors.white)),
+                      ),
+                      title: Text(c["name"]!, style: const TextStyle(color: Colors.white)),
+                      trailing: isSelected
+                        ? const Icon(Icons.check_circle, color: Color(0xFF00D4FF))
+                        : const Icon(Icons.circle_outlined, color: Colors.white38),
+                      onTap: () => setModalState(() {
+                        if (isSelected) selectedIds.remove(c["id"]);
+                        else selectedIds.add(c["id"]!);
+                      }),
+                    );
+                  },
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.pop(ctx, selectedIds.toList()),
+                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00D4FF)),
+                    child: Text('Reenviar (${selectedIds.length})', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (selected == null || selected.isEmpty) return;
+
+    // Reenviar a cada contacto seleccionado
+    final type = msg["type"]?.toString() ?? "";
+    for (final toId in selected) {
+      if (type == "text") {
+        final text = msg["message"]?.toString() ?? "";
+        final fwdText = "↪ $text";
+        SocketManager().send({"to": toId, "type": "text", "message": fwdText});
+      } else if (type == "image" || type == "audio" || type == "file") {
+        SocketManager().send({...msg, "to": toId, "from": widget.myUserId});
+      }
+    }
+
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Reenviado a ${selected.length} contacto(s)'), backgroundColor: Colors.green),
+    );
   }
 
   String _formatTimestamp(String ts) {
@@ -1535,6 +1910,17 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+
+  Future<void> _sendFakeLocation(dynamic location) async {
+    final lat = location.latitude as double;
+    final lng = location.longitude as double;
+    final url = "https://maps.google.com/?q=$lat,$lng";
+    final msg = {"to": remoteUserId, "type": "location", "message": "📍 Ubicación: ${lat.toStringAsFixed(5)}, ${lng.toStringAsFixed(5)}", "url": url};
+    SocketManager().send(msg);
+    setState(() => messages.add({...msg, "from": widget.myUserId, "timestamp": DateTime.now().millisecondsSinceEpoch.toString()}));
+    _scrollToBottom();
+  }
+
   Future<void> _sendLocation() async {
     final permission = await Geolocator.requestPermission();
     if (permission == LocationPermission.denied) return;
@@ -1551,14 +1937,24 @@ class _ChatScreenState extends State<ChatScreen> {
     if (permission == LocationPermission.denied) return;
     _liveLocationTimer?.cancel();
     final endTime = DateTime.now().add(Duration(hours: hours));
+    final liveId = DateTime.now().millisecondsSinceEpoch.toString();
+    // Enviar mensaje inicial inmediatamente
+    final pos = await Geolocator.getCurrentPosition();
+    final url = "https://maps.google.com/?q=${pos.latitude},${pos.longitude}";
+    final initialMsg = {"to": remoteUserId, "type": "live_location", "live_id": liveId, "message": "📡 Ubicación en vivo (${hours}h): ${pos.latitude.toStringAsFixed(5)}, ${pos.longitude.toStringAsFixed(5)}", "url": url};
+    SocketManager().send(initialMsg);
+    setState(() => messages.add({...initialMsg, "from": widget.myUserId, "timestamp": DateTime.now().millisecondsSinceEpoch.toString()}));
+    _scrollToBottom();
+    // Actualizar cada 30 segundos
     _liveLocationTimer = Timer.periodic(const Duration(seconds: 30), (timer) async {
       if (DateTime.now().isAfter(endTime)) { timer.cancel(); return; }
-      final pos = await Geolocator.getCurrentPosition();
-      final url = "https://maps.google.com/?q=${pos.latitude},${pos.longitude}";
-      SocketManager().send({"to": remoteUserId, "type": "live_location", "message": "📡 Ubicación en vivo (${hours}h): ${pos.latitude.toStringAsFixed(5)}, ${pos.longitude.toStringAsFixed(5)}", "url": url});
+      final pos2 = await Geolocator.getCurrentPosition();
+      final url2 = "https://maps.google.com/?q=${pos2.latitude},${pos2.longitude}";
+      SocketManager().send({"to": remoteUserId, "type": "live_location_update", "live_id": liveId, "message": "📡 Ubicación en vivo (${hours}h): ${pos2.latitude.toStringAsFixed(5)}, ${pos2.longitude.toStringAsFixed(5)}", "url": url2});
     });
     if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("📡 Compartiendo ubicación en vivo por ${hours}h")));
   }
+
 
   void _showLiveLocationOptions() {
     showModalBottomSheet(
@@ -1573,8 +1969,14 @@ class _ChatScreenState extends State<ChatScreen> {
             const SizedBox(height: 12),
             const ListTile(title: Text("📡 Compartir ubicación", style: TextStyle(fontWeight: FontWeight.bold))),
             _optionTile(Icons.location_on, "📍 Ubicación exacta", Colors.blue, () { Navigator.pop(context); _sendLocation(); }),
+            _optionTile(Icons.location_on, "🎭 Ubicación falsa", Colors.purple, () async { 
+              Navigator.pop(context); 
+              final fakeLocation = await Navigator.push<dynamic>(context, MaterialPageRoute(builder: (_) => const FakeLocationScreen()));
+              if (fakeLocation != null) _sendFakeLocation(fakeLocation);
+            }),
             _optionTile(Icons.location_on, "📡 En vivo 1 hora", Colors.green, () { Navigator.pop(context); _sendLiveLocation(1); }),
             _optionTile(Icons.location_on, "📡 En vivo 6 horas", Colors.orange, () { Navigator.pop(context); _sendLiveLocation(6); }),
+            _optionTile(Icons.location_on, "📡 En vivo 8 horas", Colors.deepOrange, () { Navigator.pop(context); _sendLiveLocation(8); }),
             _optionTile(Icons.location_on, "📡 En vivo 12 horas", Colors.red, () { Navigator.pop(context); _sendLiveLocation(12); }),
             if (_liveLocationTimer != null)
               _optionTile(Icons.stop, "⛔ Detener ubicación en vivo", Colors.red, () { Navigator.pop(context); _liveLocationTimer?.cancel(); _liveLocationTimer = null; if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("⛔ Ubicación en vivo detenida"))); }),
@@ -1582,11 +1984,12 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
         ),
       ),
+
     );
   }
 
   void _addReaction(int index, String emoji) {
-    setState(() => _reactions[index] = emoji);
+    // reacción eliminada
     Navigator.pop(context);
   }
 
@@ -1689,6 +2092,7 @@ class _AudioBubbleState extends State<_AudioBubble> {
   double _progress = 0;
   final PlayerController _waveController = PlayerController();
   bool _waveReady = false;
+  double _speed = 1.0;
 
   @override
   void initState() {
@@ -1802,11 +2206,36 @@ class _AudioBubbleState extends State<_AudioBubble> {
                     ),
                   ),
                 const SizedBox(height: 4),
+                const SizedBox(height: 4),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(_fmt(_current), style: TextStyle(fontSize: 10, color: color.withOpacity(0.7))),
                     Row(children: [
+                      // Botón velocidad
+                      GestureDetector(
+                        onTap: () {
+                          setState(() {
+                            if (_speed == 0.5) _speed = 1.0;
+                            else if (_speed == 1.0) _speed = 1.5;
+                            else if (_speed == 1.5) _speed = 2.0;
+                            else _speed = 0.5;
+                          });
+                          _waveController.setRate(_speed);
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                          decoration: BoxDecoration(
+                            border: Border.all(color: color.withOpacity(0.5)),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            _speed == 1.0 ? "1x" : _speed == 0.5 ? "0.5x" : _speed == 1.5 ? "1.5x" : "2x",
+                            style: TextStyle(fontSize: 9, color: color, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 4),
                       Icon(Icons.mic, size: 10, color: color.withOpacity(0.5)),
                       const SizedBox(width: 2),
                       Text(

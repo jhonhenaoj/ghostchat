@@ -9,6 +9,14 @@ plugins {
 }
 
 android {
+    signingConfigs {
+        create("release") {
+            keyAlias = "ghostchat"
+            keyPassword = "ghostchat2024"
+            storeFile = file("ghostchat.jks")
+            storePassword = "ghostchat2024"
+        }
+    }
     namespace = "com.secureapp.ghost_client"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
@@ -35,7 +43,7 @@ android {
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
+            signingConfig = signingConfigs.getByName("release")
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
         }
@@ -54,4 +62,9 @@ android {
 
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
+}
+
+dependencies {
+    implementation("com.google.firebase:firebase-messaging:24.0.0")
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
 }

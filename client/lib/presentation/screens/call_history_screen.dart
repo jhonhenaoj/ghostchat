@@ -63,12 +63,14 @@ class _CallHistoryScreenState extends State<CallHistoryScreen> {
   }
 
   String _formatTime(int ms) {
+    if (ms == 0) return '';
     final dt = DateTime.fromMillisecondsSinceEpoch(ms);
     final now = DateTime.now();
-    if (dt.day == now.day) {
+    if (dt.day == now.day && dt.month == now.month && dt.year == now.year) {
       return '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
     }
-    if (dt.day == now.day - 1) return 'Ayer';
+    final yesterday = now.subtract(const Duration(days: 1));
+    if (dt.day == yesterday.day && dt.month == yesterday.month && dt.year == yesterday.year) return 'Ayer';
     return '${dt.day}/${dt.month}/${dt.year}';
   }
 
