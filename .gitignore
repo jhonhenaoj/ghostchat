@@ -18,3 +18,6 @@ server/firebase-key.json
 
 # Android SDK
 android-sdk/
+server/ghost-server
+server/ghost-server-linux
+client/build/
